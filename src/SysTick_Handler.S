@@ -12,16 +12,15 @@
 
 
 
+
 	/*
 		Se cambia a la seccion .data, donde se almacenan las variables en RAM
 		Para ver data types en assembler
 			--> http://infocenter.arm.com/help/index.jsp?topic=/com.arm.doc.dui0175m/Cbhifdhe.html
 	*/
 	.data
-		i: .word 0		//Variable de muestra. Equivale a: uint16_t i = 0;
-
-		.extern sp_durante
-		.extern stackFrame
+		estado: .word 0					//Variable necesaria para seguimiento de siguiente tarea;
+		.extern sp_tarea1,sp_tarea2		//Variables donde se guardan los stack pointers
 
 
 	/*
@@ -36,35 +35,60 @@
 	.thumb_func
 
 
-#define sp_value		R4
-#define sp_pointer		R5
-#define contador		R6
-#define aux				R7
-#define stack_frame_dir	R8
-
-
-
 
 SysTick_Handler:
-	mrs sp_value,msp					//pasamos el valor del Stack pointer actual a R4
-	ldr sp_pointer, =sp_durante			//puntero a la variable global. Equivale a R5 = &sp_durante;
-	str sp_value, [sp_pointer]			// *sp_pointer = sp_value --> sp_durante = MSP
-
-	ldr contador,=8						//cargamos el valor 8 al contador (son 8 registros, del SP+7 al SP)
-	ldr stack_frame_dir, =stackFrame
-
-
-loop:
-	sub contador,1							//contador--;
-
-	ldr aux,[sp_value,contador, LSL 2]		//cargamos aux con los valores uint32_t del stack en orden inverso
-   											//aux = *(sp_pointer + (contador << 2))
-
-	str aux,[stack_frame_dir,contador, LSL 2]   //*(stack_frame_dir + (contador << 2)) = aux
+	ldr r0, =estado		// r0 = &state
+	ldr r1, [r0]		//r1 = *r0
+	tbb [pc,r1]
+tabla:							//construccion de un switch-case en asm
+	.byte (case0-tabla)/2
+	.byte (case1-tabla)/2
+	.byte (case2-tabla)/2
+	.byte (case_end-tabla)/2
 
 
-	cmp contador,0								//contador == 0 ?. SI: Ya tenemos los valores en el array global
-	bne loop									//				   NO: branch loop
 
-return:
-	bx lr		//branch indirect. Al cargarse este valor en el PC, el core ejecuta auto-unstacking
+/****** Si es el primer ingreso (estado == 0), debemos cargar en MSP el contenido de sp_tarea1 ***
+		NOTA: Observar como es descartado el valor inicial de MSP (se sobreescribe)				*/
+case0:
+	mov r1,1
+	str r1,[r0]				//estado = 1
+
+	ldr r0,=sp_tarea1		//R0 = &sp_tarea1
+	ldr r1,[r0]				//R1 = *R0
+	msr msp,r1				//MSP = R1 ==> MSP = sp_tarea1
+	//break;
+	b case_end
+
+
+/****** Si se expropio el CPU a la tarea1 (estado == 1), debemos cargar en MSP el contenido de sp_tarea2 ****/
+case1:
+	mov r1,2
+	str r1,[r0]		//estado = 2
+
+	ldr r0,=sp_tarea1		//R0 = &sp_tarea1
+	mrs r1,msp				//R1 = MSP
+	str r1,[r0]				//*R0 = R1 ==> sp_tarea1 = MSP
+
+	ldr r0,=sp_tarea2		//R0 = &sp_tarea2
+	ldr r1,[r0]				//R1 = *R0
+	msr msp,r1				//MSP = R1 ==> MSP = sp_tarea1
+	//break;
+	b case_end
+
+
+/****** Si se expropio el CPU a la tarea2 (estado == 2), debemos cargar en MSP el contenido de sp_tarea1 ****/
+case2:
+	mov r1,1
+	str r1,[r0]		//estado = 1
+
+	ldr r0,=sp_tarea2		//R0 = &sp_tarea2
+	mrs r1,msp				//R1 = MSP
+	str r1,[r0]				//*R0 = R1 ==> sp_tarea2 = MSP
+
+	ldr r0,=sp_tarea1		//R0 = &sp_tarea1
+	ldr r1,[r0]				//R1 = *R0
+	msr msp,r1				//MSP = R1 ==> MSP = sp_tarea1
+
+case_end:
+	bx lr			//Branch indirecto, se carga en PC lo que hay el LR (EXEC_RETURN)
