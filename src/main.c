@@ -40,16 +40,21 @@ static void initHardware(void)  {
 
 /*==================[Definicion de tareas para el OS]==========================*/
 void tarea1(void)  {
-	int i;
+	uint16_t h = 0;
+	uint16_t i = 0;
 	while (1) {
+		h++;
 		i++;
 	}
 }
 
 void tarea2(void)  {
-	int j;
+	uint16_t j = 0;
+	uint16_t k = 0;
+
 	while (1) {
 		j++;
+		k++;
 	}
 }
 
