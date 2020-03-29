@@ -64,11 +64,12 @@ int main(void)  {
 
 	initHardware();
 
+	os_Init();
+
 	os_InitTarea(tarea1, &stack1, &sp_tarea1);
 	os_InitTarea(tarea2, &stack2, &sp_tarea2);
 
 	while (1) {
-		__WFI();
 	}
 }
 

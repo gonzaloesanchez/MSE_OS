@@ -9,6 +9,7 @@
 #define ISO_I_2020_MSE_OS_INC_MSE_OS_CORE_H_
 
 #include <stdint.h>
+#include "board.h"
 
 
 /************************************************************************************
@@ -22,25 +23,26 @@
 
 
 /************************************************************************************
- * 	Posiciones dentro del stack frame de los registros que conforman el stack frame
+ * 	Posiciones dentro del stack de los registros que lo conforman
  ***********************************************************************************/
 
-#define XPSR		1
-#define PC_REG		2
-#define LR			3
-#define R12			4
-#define R3			5
-#define R2			6
-#define R1			7
-#define R0			8
-#define R4			9
-#define R5			10
-#define R6			11
-#define R7			12
-#define R8			13
-#define R9			14
-#define R10 		15
-#define R11 		16
+#define XPSR			1
+#define PC_REG			2
+#define LR				3
+#define R12				4
+#define R3				5
+#define R2				6
+#define R1				7
+#define R0				8
+#define LR_PREV_VALUE	9
+#define R4				10
+#define R5				11
+#define R6				12
+#define R7				13
+#define R8				14
+#define R9				15
+#define R10 			16
+#define R11 			17
 
 //----------------------------------------------------------------------------------
 
@@ -59,12 +61,19 @@
  * 						Definiciones varias
  ***********************************************************************************/
 #define STACK_FRAME_SIZE			8
-#define FULL_REG_STACKING_SIZE 		16	//16 core registers
+#define FULL_STACKING_SIZE 			17	//16 core registers + valor previo de LR
+
+
+/*==================[definicion de datos externa]=================================*/
+
+extern uint32_t sp_tarea1;					//Stack Pointer para la tarea 1
+extern uint32_t sp_tarea2;					//Stack Pointer para la tarea 2
 
 
 /*==================[definicion de prototipos]=================================*/
 
 void os_InitTarea(void *tarea, uint32_t *stack, uint32_t *stack_pointer);
+void os_Init(void);
 
 
 
