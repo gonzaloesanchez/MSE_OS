@@ -13,9 +13,9 @@
 
 /*==================[Global data declaration]==============================*/
 
-tarea g_sTarea1, g_sTarea2,g_sTarea3;
-tarea g_sTarea4, g_sTarea5,g_sTarea6;
-tarea g_sTarea7, g_sTarea8,g_sTarea9;
+tarea g_sTarea1, g_sTarea2, g_sTarea3;
+tarea g_sTarea4, g_sTarea5, g_sTarea6;
+tarea g_sTarea7, g_sTarea8, g_sTarea9;
 
 /*==================[internal functions declaration]=========================*/
 
@@ -67,6 +67,7 @@ void tarea3(void)  {
 
 
 
+
 /*============================================================================*/
 
 int main(void)  {
@@ -76,6 +77,7 @@ int main(void)  {
 	os_InitTarea(tarea1, &g_sTarea1);
 	os_InitTarea(tarea2, &g_sTarea2);
 	os_InitTarea(tarea3, &g_sTarea3);
+
 
 
 	os_Init();

@@ -134,6 +134,7 @@ typedef struct _osControl osControl;
 
 void os_InitTarea(void *entryPoint, tarea *task);
 void os_Init(void);
+int32_t os_getError(void);
 
 
 

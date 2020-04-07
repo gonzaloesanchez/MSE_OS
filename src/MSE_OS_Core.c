@@ -15,6 +15,82 @@ static osControl control_OS;
 
 
 
+/*==================[definicion de hooks debiles]=================================*/
+
+/*
+ * Esta seccion contiene los hooks de sistema, los cuales el usuario del OS puede
+ * redefinir dentro de su codigo y poblarlos segun necesidad
+ */
+
+
+/*************************************************************************************************
+	 *  @brief Hook de retorno de tareas
+     *
+     *  @details
+     *   Esta funcion no deberia accederse bajo ningun concepto, porque ninguna tarea del OS
+     *   debe retornar. Si lo hace, es un comportamiento anormal y debe ser tratado.
+     *
+	 *  @param none
+	 *
+	 *  @return none.
+***************************************************************************************************/
+void __attribute__((weak)) returnHook(void)  {
+	while(1);
+}
+
+
+
+/*************************************************************************************************
+	 *  @brief Hook de tick de sistema
+     *
+     *  @details
+     *   Se ejecuta cada vez que se produce un tick de sistema. Es llamada desde el handler de
+     *   SysTick.
+     *
+	 *  @param none
+	 *
+	 *  @return none.
+	 *
+	 *  @warning	Esta funcion debe ser lo mas corta posible porque se ejecuta dentro del handler
+     *   			mencionado, por lo que tiene prioridad sobre el cambio de contexto y otras IRQ.
+	 *
+	 *  @warning 	Esta funcion no debe bajo ninguna circunstancia utilizar APIs del OS dado
+	 *  			que podria dar lugar a un nuevo scheduling.
+***************************************************************************************************/
+void __attribute__((weak)) tickHook(void)  {
+	__asm volatile( "nop" );
+}
+
+
+
+/*************************************************************************************************
+	 *  @brief Hook de error de sistema
+     *
+     *  @details
+     *   Esta funcion es llamada en caso de error del sistema, y puede ser utilizada a fin de hacer
+     *   debug. El puntero de la funcion que llama a errorHook es pasado como parametro para tener
+     *   informacion de quien la esta llamando, y dentro de ella puede verse el codigo de error
+     *   en la estructura de control de sistema. Si ha de implementarse por el usuario para manejo
+     *   de errores, es importante tener en cuenta que la estructura de control solo esta disponible
+     *   dentro de este archivo.
+     *
+	 *  @param caller		Puntero a la funcion donde fue llamado errorHook. Implementado solo a
+	 *  					fines de trazabilidad de errores
+	 *
+	 *  @return none.
+***************************************************************************************************/
+void __attribute__((weak)) errorHook(void *caller)  {
+	/*
+	 * Revisar el contenido de control_OS.error para obtener informacion. Utilizar os_getError()
+	 */
+	while(1);
+}
+
+
+
+
+
+/*==================[definicion de funciones de OS]=================================*/
 
 
 /*************************************************************************************************
@@ -44,7 +120,7 @@ void os_InitTarea(void *entryPoint, tarea *task)  {
 
 		task->stack[STACK_SIZE/4 - XPSR] = INIT_XPSR;					//necesario para bit thumb
 		task->stack[STACK_SIZE/4 - PC_REG] = (uint32_t)entryPoint;		//direccion de la tarea (ENTRY_POINT)
-
+		task->stack[STACK_SIZE/4 - LR] = (uint32_t)returnHook;			//Retorno de la tarea (no deberia darse)
 
 		/*
 		 * El valor previo de LR (que es EXEC_RETURN en este caso) es necesario dado que
@@ -77,7 +153,13 @@ void os_InitTarea(void *entryPoint, tarea *task)  {
 	}
 
 	else {
-		control_OS.error = ERR_OS_CANT_TAREAS;		//excedimos la cantidad de tareas posibles
+		/*
+		 * En el caso que se hayan excedido la cantidad de tareas que se pueden definir, se actualiza
+		 * el ultimo error generado en la estructura de control del OS y se llama a errorHook y se
+		 * envia informacion de quien es quien la invoca.
+		 */
+		control_OS.error = ERR_OS_CANT_TAREAS;
+		errorHook(os_InitTarea);
 	}
 }
 
@@ -122,6 +204,26 @@ void os_Init(void)  {
 			control_OS.listaTareas[i] = NULL;
 	}
 }
+
+
+
+
+/*************************************************************************************************
+	 *  @brief Extrae el codigo de error de la estructura de control del OS.
+     *
+     *  @details
+     *   La estructura de control del OS no es visible al usuario, por lo que se facilita una API
+     *   para extraer el ultimo codigo de error ocurrido, para su posterior tratamiento. Esta
+     *   funcion puede ser utilizada dentro de errorHook
+     *
+	 *  @param 		None.
+	 *  @return     Ultimo error ocurrido dentro del OS.
+	 *  @see errorHook
+***************************************************************************************************/
+int32_t os_getError(void)  {
+	return control_OS.error;
+}
+
 
 
 
@@ -184,6 +286,13 @@ void SysTick_Handler(void)  {
 	 */
 
 	scheduler();
+
+	/*
+	 * Luego de determinar cual es la tarea siguiente segun el scheduler, se ejecuta la funcion
+	 * tickhook.
+	 */
+
+	tickHook();
 
 	/**
 	 * Se setea el bit correspondiente a la excepcion PendSV
