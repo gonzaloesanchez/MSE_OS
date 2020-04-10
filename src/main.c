@@ -14,8 +14,6 @@
 /*==================[Global data declaration]==============================*/
 
 tarea g_sTarea1, g_sTarea2, g_sTarea3;
-tarea g_sTarea4, g_sTarea5, g_sTarea6;
-tarea g_sTarea7, g_sTarea8, g_sTarea9;
 
 /*==================[internal functions declaration]=========================*/
 

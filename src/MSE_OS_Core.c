@@ -7,12 +7,21 @@
 
 #include "MSE_OS_Core.h"
 
+
+
+
+
+
 /*==================[definicion de variables globales]=================================*/
 
 static osControl control_OS;
+static tarea tareaIdle;
 
 //----------------------------------------------------------------------------------
 
+/*==================[definicion de prototipos static]=================================*/
+static void initTareaIdle(void);
+static void setPendSV(void);
 
 
 /*==================[definicion de hooks debiles]=================================*/
@@ -88,6 +97,28 @@ void __attribute__((weak)) errorHook(void *caller)  {
 
 
 
+/*************************************************************************************************
+	 *  @brief Tarea Idle (segundo plano)
+     *
+     *  @details
+     *   Esta tarea se ejecuta solamente cuando todas las demas tareas estan en estado bloqueado.
+     *   Puede ser redefinida por el usuario.
+     *
+	 *  @param none
+	 *
+	 *  @return none.
+	 *
+	 *  @warning		No debe utilizarse ninguna funcion API del OS dentro de esta funcion. No
+	 *  				debe ser causa de un re-scheduling.
+***************************************************************************************************/
+void __attribute__((weak)) idleTask(void)  {
+	while(1)  {
+		__WFI();
+	}
+}
+
+
+
 
 
 /*==================[definicion de funciones de OS]=================================*/
@@ -113,10 +144,12 @@ void os_InitTarea(void *entryPoint, tarea *task)  {
 	 * Al principio se efectua un pequeño checkeo para determinar si llegamos a la cantidad maxima de
 	 * tareas que pueden definirse para este OS. En el caso de que se traten de inicializar mas tareas
 	 * que el numero maximo soportado, se guarda un codigo de error en la estructura de control del OS
-	 * y la tarea no se inicializa.
+	 * y la tarea no se inicializa. La tarea idle debe ser exceptuada del conteo de cantidad maxima
+	 * de tareas porque si al momento de iniciar el sistema ya se definieron la cantidad maxima de
+	 * tareas posible, la tarea idle seria la numero 9 y la primer condicion es falsa.
 	 */
 
-	if(control_OS.cantidad_Tareas < MAX_TASK_COUNT)  {
+	if(control_OS.cantidad_Tareas < MAX_TASK_COUNT || entryPoint == idleTask)  {
 
 		task->stack[STACK_SIZE/4 - XPSR] = INIT_XPSR;					//necesario para bit thumb
 		task->stack[STACK_SIZE/4 - PC_REG] = (uint32_t)entryPoint;		//direccion de la tarea (ENTRY_POINT)
@@ -134,7 +167,7 @@ void os_InitTarea(void *entryPoint, tarea *task)  {
 
 		/*
 		 * En esta seccion se guarda el entry point de la tarea, se le asigna id a la misma y se pone
-		 * la misma en estado READY. Todas las tareas se crean en estado READY
+		 * la misma en estado READY. Todas las tareas se crean en estado READY.
 		 */
 		task->entry_point = entryPoint;
 		task->id = id;
@@ -184,6 +217,13 @@ void os_Init(void)  {
 	NVIC_SetPriority(PendSV_IRQn, (1 << __NVIC_PRIO_BITS)-1);
 
 	/*
+	 * Es necesaria la inicializacion de la tarea idle, la cual no es visible al usuario
+	 * El usuario puede eventualmente poblarla de codigo o redefinirla, pero no debe
+	 * inicializarla ni definir una estructura para la misma.
+	 */
+	initTareaIdle();
+
+	/*
 	 * Al iniciar el OS se especifica que se encuentra en la primer ejecucion desde un reset.
 	 * Este estado es util para cuando se debe ejecutar el primer cambio de contexto. Los
 	 * punteros de tarea_actual y tarea_siguiente solo pueden ser determinados por el scheduler
@@ -197,9 +237,10 @@ void os_Init(void)  {
 	 * El vector de tareas termina de inicializarse asignando NULL a las posiciones que estan
 	 * luego de la ultima tarea. Esta situacion se da cuando se definen menos de 8 tareas.
 	 * Estrictamente no existe necesidad de esto, solo es por seguridad.
+	 * NOTA: La ultima tarea de este vector sera siempre la tarea idle
 	 */
 
-	for (uint8_t i = 0; i < MAX_TASK_COUNT; i++)  {
+	for (uint8_t i = 0; i < MAX_TASK_COUNT_W_IDLE; i++)  {
 		if(i>=control_OS.cantidad_Tareas)
 			control_OS.listaTareas[i] = NULL;
 	}
@@ -225,6 +266,35 @@ int32_t os_getError(void)  {
 }
 
 
+/*************************************************************************************************
+	 *  @brief Inicializacion de la tarea idle.
+     *
+     *  @details
+     *   Esta funcion es una version reducida de os_initTarea para la tarea idle. Como esta tarea
+     *   debe estar siempre presente y el usuario no la inicializa, los argumentos desaparecen
+     *   y se toman estructura y entryPoint fijos. Tampoco se contabiliza entre las tareas
+     *   disponibles (no se actualiza el contador de cantidad de tareas). El id de esta tarea
+     *   se establece como 255 (0xFF) para indicar que es una tarea especial.
+     *
+	 *  @param 		None.
+	 *  @return     None
+	 *  @see os_InitTarea
+***************************************************************************************************/
+static void initTareaIdle(void)  {
+	tareaIdle.stack[STACK_SIZE/4 - XPSR] = INIT_XPSR;					//necesario para bit thumb
+	tareaIdle.stack[STACK_SIZE/4 - PC_REG] = (uint32_t)idleTask;		//direccion de la tarea (ENTRY_POINT)
+	tareaIdle.stack[STACK_SIZE/4 - LR] = (uint32_t)returnHook;			//Retorno de la tarea (no deberia darse)
+
+
+	tareaIdle.stack[STACK_SIZE/4 - LR_PREV_VALUE] = EXEC_RETURN;
+	tareaIdle.stack_pointer = (uint32_t) (tareaIdle.stack + STACK_SIZE/4 - FULL_STACKING_SIZE);
+
+
+	tareaIdle.entry_point = idleTask;
+	tareaIdle.id = 0xFF;
+	tareaIdle.estado = TAREA_READY;
+}
+
 
 
 /*************************************************************************************************
@@ -240,29 +310,81 @@ int32_t os_getError(void)  {
 ***************************************************************************************************/
 static void scheduler(void)  {
 	uint8_t indice;		//variable auxiliar para legibilidad
+	bool salir = false;
+	uint8_t cant_bloqueadas = 0;
+
 
 	/*
 	 * El scheduler recibe la informacion desde la variable estado de sistema si es el primer ingreso
 	 * desde el ultimo reset. Si esto es asi, determina que la tarea actual es la primer tarea.
+	 * Esto tiene aun validez porque todas las tareas se crean con estado READY.
+	 * En esta version, se agrega una bandera por la cual el scheduler indica en la estructura de
+	 * control del OS si es necesario hacer un cambio de contexto
+	 *
 	 */
 	if (control_OS.estado_sistema == OS_FROM_RESET)  {
 		control_OS.tarea_actual = (tarea*) control_OS.listaTareas[0];
+		control_OS.cambioContextoNecesario = true;
 	}
 	else {
-
 		/*
-		 * Obtenemos la siguiente tarea en el vector. Si se llega a la ultima tarea disponible
-		 * se hace un reset del contador
+		 * En el caso que no sea el primer ingreso desde el reset, se comienza a
+		 * iterar sobre el vector de tareas. La primer linea determina que el indice
+		 * jamas sera mayor a cantidad_Tareas - 1. La primer tarea que se encuentre
+		 * en estado ready sera la proxima tarea a ejecutar.
+		 * Si la siguiente tarea en el vector tiene estado BLOCKED, se vuelve a iterar,
+		 * incrementando el contador de tareas bloqueadas. Cuando la cantidad de tareas
+		 * bloqueadas es igual a la cantidad de tareas presentes en el sistema, la tarea
+		 * que se ejecuta es la tarea idle.
+		 * Recordar que aunque todas las tareas definidas por el usuario esten bloqueadas
+		 * la tarea Idle solamente puede tomar estados READY y RUNNING.
 		 */
-		indice = control_OS.tarea_actual->id+1;
-		if(indice < control_OS.cantidad_Tareas)  {
-			control_OS.tarea_siguiente = (tarea*) control_OS.listaTareas[indice];
-		}
-		else  {
-			control_OS.tarea_siguiente = (tarea*) control_OS.listaTareas[0];
+
+		indice = control_OS.tarea_actual->id;
+
+		while(!salir)  {
+
+			indice = (++indice) % control_OS.cantidad_Tareas;
+
+			switch (((tarea*)control_OS.listaTareas[indice])->estado) {
+
+			case TAREA_READY:
+				control_OS.tarea_siguiente = (tarea*) control_OS.listaTareas[indice];
+				control_OS.cambioContextoNecesario = true;
+				salir = true;
+				break;
+
+			case TAREA_BLOCKED:
+				cant_bloqueadas++;
+				if (cant_bloqueadas == control_OS.cantidad_Tareas)  {
+					control_OS.tarea_siguiente = &tareaIdle;
+					control_OS.cambioContextoNecesario = true;
+					salir = true;
+				}
+				break;
+
+			/*
+			 * El unico caso que la siguiente tarea este en estado RUNNING es que
+			 * todas las demas tareas excepto la tarea corriendo actualmente esten en
+			 * estado BLOCKED, con lo que un cambio de contexto no es necesario, porque
+			 * se sigue ejecutando la misma tarea
+			 */
+			case TAREA_RUNNING:
+				control_OS.cambioContextoNecesario = false;
+				salir = true;
+				break;
+
+			/*
+			 * En el caso que lleguemos al caso default, la tarea tomo un estado
+			 * el cual es invalido, por lo que directamente se llama errorHook
+			 * y se actualiza la variable de ultimo error
+			 */
+			default:
+				control_OS.error = ERR_OS_SCHEDULING;
+				errorHook(scheduler);
+			}
 		}
 	}
-
 }
 
 
@@ -288,12 +410,35 @@ void SysTick_Handler(void)  {
 	scheduler();
 
 	/*
+	 * Se checkea la bandera correspondiente para verificar si es necesario un cambio de
+	 * contexto. En caso afirmativo, se lanza PendSV
+	 */
+
+	if(control_OS.cambioContextoNecesario)
+		setPendSV();
+
+
+	/*
 	 * Luego de determinar cual es la tarea siguiente segun el scheduler, se ejecuta la funcion
 	 * tickhook.
 	 */
 
 	tickHook();
+}
 
+
+
+/*************************************************************************************************
+	 *  @brief Setea la bandera correspondiente para lanzar PendSV.
+     *
+     *  @details
+     *   Esta funcion simplemente es a efectos de simplificar la lectura del programa. Setea
+     *   la bandera comrrespondiente para que se ejucute PendSV
+     *
+	 *  @param 		None
+	 *  @return     None
+***************************************************************************************************/
+static void setPendSV(void)  {
 	/**
 	 * Se setea el bit correspondiente a la excepcion PendSV
 	 */
@@ -311,7 +456,6 @@ void SysTick_Handler(void)  {
 	 */
 	__DSB();
 }
-
 
 
 
@@ -347,20 +491,30 @@ uint32_t getContextoSiguiente(uint32_t sp_actual)  {
 	/*
 	 * En el caso que no sea la primera vez que se ejecuta esta funcion, se hace un cambio de contexto
 	 * de manera habitual. Se guarda el MSP (sp_actual) en la variable correspondiente de la estructura
-	 * de la tarea corriendo actualmente. Como a este punto no hay mas estados implementados (solamente
-	 * READY y RUNNING) se pasa la tarea actual a estado READY.
+	 * de la tarea corriendo actualmente. Ahora que el estado BLOCKED esta implementado, se debe hacer
+	 * un assert de si la tarea actual fue expropiada mientras estaba corriendo o si la expropiacion
+	 * fue hecha de manera prematura dado que paso a estado BLOCKED. En el segundo caso, solamente
+	 * se puede pasar de BLOCKED a READY a partir de un evento.
 	 * Se carga en la variable sp_siguiente el stack pointer de la tarea siguiente, que fue definida
 	 * por el scheduler. Se actualiza la misma a estado RUNNING y se retorna al handler de PendSV
 	 */
 	else {
 		control_OS.tarea_actual->stack_pointer = sp_actual;
-		control_OS.tarea_actual->estado = TAREA_READY;
+
+		if (control_OS.tarea_actual->estado == TAREA_RUNNING)
+			control_OS.tarea_actual->estado = TAREA_READY;
 
 		sp_siguiente = control_OS.tarea_siguiente->stack_pointer;
 
 		control_OS.tarea_actual = control_OS.tarea_siguiente;
 		control_OS.tarea_actual->estado = TAREA_RUNNING;
 	}
+
+	/*
+	 * Indicamos que luego de retornar de esta funcion, ya no es necesario un cambio de contexto
+	 * porque se acaba de gestionar.
+	 */
+	control_OS.cambioContextoNecesario = false;
 
 	return sp_siguiente;
 }

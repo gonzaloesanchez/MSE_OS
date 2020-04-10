@@ -67,10 +67,16 @@
 #define TASK_NAME_SIZE				10	//tamaño array correspondiente al nombre
 #define MAX_TASK_COUNT				8	//cantidad maxima de tareas para este OS
 
+#define MAX_TASK_COUNT_W_IDLE		MAX_TASK_COUNT+1	//cantidad maxima de tareas mas tarea idle
+
+#define MAX_PRIORITY		0			//maxima prioridad que puede tener una tarea
+#define MIN_PRIORITY		3			//minima prioridad que puede tener una tarea
+
 
 
 /*==================[definicion codigos de error de OS]=================================*/
 #define ERR_OS_CANT_TAREAS		-1
+#define ERR_OS_SCHEDULING		-2
 
 
 
@@ -82,7 +88,8 @@
 
 enum _estadoTarea  {
 	TAREA_READY,
-	TAREA_RUNNING
+	TAREA_RUNNING,
+	TAREA_BLOCKED
 };
 
 typedef enum _estadoTarea estadoTarea;
@@ -119,10 +126,11 @@ typedef struct _tarea tarea;
  * Definicion de la estructura de control para el sistema operativo
  *******************************************************************************/
 struct _osControl  {
-	void *listaTareas[MAX_TASK_COUNT];			//array de punteros a tareas
+	void *listaTareas[MAX_TASK_COUNT_W_IDLE];	//array de punteros a tareas
 	int32_t error;								//variable que contiene el ultimo error generado
 	uint8_t cantidad_Tareas;					//cantidad de tareas definidas por el usuario para cada prioridad
 	estadoOS estado_sistema;					//Informacion sobre el estado del OS
+	bool cambioContextoNecesario;				//Esta bandera indica si el scheduler determino un cambio de contexto
 
 	tarea *tarea_actual;				//definicion de puntero para tarea actual
 	tarea *tarea_siguiente;			//definicion de puntero para tarea siguiente
