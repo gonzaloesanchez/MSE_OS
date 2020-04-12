@@ -10,6 +10,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <string.h>
 #include "board.h"
 
 
@@ -117,6 +118,7 @@ struct _tarea  {
 	uint8_t id;
 	estadoTarea estado;
 	uint8_t prioridad;
+	uint32_t ticks_bloqueada;					//cantidad de ticks que la tarea debe permanecer bloqueada
 };
 
 typedef struct _tarea tarea;
@@ -146,6 +148,8 @@ typedef struct _osControl osControl;
 void os_InitTarea(void *entryPoint, tarea *task, uint8_t prioridad);
 void os_Init(void);
 int32_t os_getError(void);
+tarea* os_getTareaActual(void);
+void os_CpuYield(void);
 
 
 

@@ -7,12 +7,6 @@
 
 #include "MSE_OS_Core.h"
 
-/*
- * TODO: Hay un BUG en el scheduler que hace que cuando se cambia de prioridad, unicamente se
- * 		 ejecute la primer tarea de esa prioridad
- */
-
-
 
 
 /*==================[definicion de variables globales]=================================*/
@@ -403,12 +397,17 @@ static void scheduler(void)  {
 
 
 				/*
-				 * Una vez obtenido el indice real, se ejecuta el swich ya implementado
-				 * anteriormente, pero con algunos cambios. En esta implementacion
-				 * se actualizan los indices correspondientes a cada subseccion dada
-				 * la prioridad actual, y antes de efectuar el cambio de contexto, se
-				 * incrementa el indice correspondiente
+				 * Una vez obtenido el indice real, antes de ejecutar el swich implementado
+				 * anteriormente, se hace un check de si la tarea estaba bloqueada por un
+				 * delay. La logica no es afectada porque el recorrido en el array listadoTareas
+				 * se efectua de igual manera, cualquiera sea el estado de las tareas.
 				 */
+				if ( ((tarea*)control_OS.listaTareas[indiceArrayTareas])->ticks_bloqueada == 0 &&
+					 ((tarea*)control_OS.listaTareas[indiceArrayTareas])->estado == TAREA_BLOCKED )  {
+
+					((tarea*)control_OS.listaTareas[indiceArrayTareas])->estado = TAREA_READY;
+				}
+
 				switch (((tarea*)control_OS.listaTareas[indiceArrayTareas])->estado) {
 
 				case TAREA_READY:
@@ -450,6 +449,7 @@ static void scheduler(void)  {
 					 * se sigue ejecutando la misma tarea
 					 */
 				case TAREA_RUNNING:
+					indicePrioridad[prioridad_actual]++;
 					control_OS.cambioContextoNecesario = false;
 					salir = true;
 					break;
@@ -485,6 +485,22 @@ static void scheduler(void)  {
 	 *  @return     None.
 ***************************************************************************************************/
 void SysTick_Handler(void)  {
+	uint8_t i;
+
+	/*
+	 * Systick se encarga de actualizar todos los temporizadores por lo que se recorren
+	 * todas las tareas que esten definidas y si tienen un valor de ticks de bloqueo mayor
+	 * a cero, se decrementan en una unidad.
+	 */
+	i = 0;
+	while (control_OS.listaTareas[i] != NULL)  {
+
+		if( ((tarea*)control_OS.listaTareas[i])->ticks_bloqueada > 0 )
+			((tarea*)control_OS.listaTareas[i])->ticks_bloqueada--;
+
+		i++;
+	}
+
 
 	/*
 	 * Dentro del SysTick handler se llama al scheduler. Separar el scheduler de
@@ -606,7 +622,38 @@ uint32_t getContextoSiguiente(uint32_t sp_actual)  {
 
 
 
+/*************************************************************************************************
+	 *  @brief Fuerza una ejecucion del scheduler.
+     *
+     *  @details
+     *   En los casos que un delay de una tarea comience a ejecutarse instantes luego de que
+     *   ocurriese un scheduling, se despericia mucho tiempo hasta el proximo tick de sistema,
+     *   por lo que se fuerza un scheduling y un cambio de contexto si es necesario.
+     *
+	 *  @param 		None
+	 *  @return     None.
+***************************************************************************************************/
+void os_CpuYield(void)  {
+	scheduler();
+	if(control_OS.cambioContextoNecesario)
+		setPendSV();
+}
 
+
+
+/*************************************************************************************************
+	 *  @brief Devuelve una copia del puntero a estructura tarea actual.
+     *
+     *  @details
+     *   En aras de mantener la estructura de control aislada solo en el archivo de core esta
+     *   funcion proporciona una copia de la estructura de la tarea actual
+     *
+	 *  @param 		None
+	 *  @return     puntero a la estructura de la tarea actual.
+***************************************************************************************************/
+tarea* os_getTareaActual(void)  {
+	return control_OS.tarea_actual;
+}
 
 
 /*************************************************************************************************

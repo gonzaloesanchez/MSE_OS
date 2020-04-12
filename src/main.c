@@ -1,10 +1,10 @@
 /*==================[inclusions]=============================================*/
 
 #include "main.h"
-
 #include "board.h"
-
 #include "MSE_OS_Core.h"
+#include "MSE_OS_API.h"
+#include "sapi.h"
 
 
 /*==================[macros and definitions]=================================*/
@@ -17,9 +17,8 @@
 
 /*==================[Global data declaration]==============================*/
 
-tarea g_sTarea1, g_sTarea2, g_sTarea3;	//prioridad 0
-tarea g_sTarea4;						//prioridad 1
-tarea g_sTarea5, g_sTarea6;				//prioridad 3
+tarea g_sTarea1;	//prioridad 0
+tarea g_sTarea2;	//prioridad 1
 
 /*==================[internal functions declaration]=========================*/
 
@@ -41,65 +40,20 @@ static void initHardware(void)  {
 
 /*==================[Definicion de tareas para el OS]==========================*/
 void tarea1(void)  {
-	uint32_t h = 0;
-	uint32_t i = 0;
+
 	while (1) {
-		h++;
-		i++;
+		gpioToggle(LED1);
+		//os_Delay(1000);
 	}
 }
 
 void tarea2(void)  {
-	uint32_t j = 0;
-	uint32_t k = 0;
 
 	while (1) {
-		j++;
-		k++;
+		gpioToggle(LEDB);
+		os_Delay(200);
 	}
 }
-
-void tarea3(void)  {
-	uint32_t l = 0;
-	uint32_t m = 0;
-
-	while (1) {
-		l++;
-		m++;
-	}
-}
-
-void tarea4(void)  {
-	uint32_t l = 0;
-	uint32_t m = 0;
-
-	while (1) {
-		l++;
-		m++;
-	}
-}
-
-void tarea5(void)  {
-	uint32_t l = 0;
-	uint32_t m = 0;
-
-	while (1) {
-		l++;
-		m++;
-	}
-}
-
-void tarea6(void)  {
-	uint32_t l = 0;
-	uint32_t m = 0;
-
-	while (1) {
-		l++;
-		m++;
-	}
-}
-
-
 
 
 /*============================================================================*/
@@ -110,13 +64,6 @@ int main(void)  {
 
 	os_InitTarea(tarea1, &g_sTarea1,PRIORIDAD_0);
 	os_InitTarea(tarea2, &g_sTarea2,PRIORIDAD_0);
-	os_InitTarea(tarea3, &g_sTarea3,PRIORIDAD_0);
-
-	os_InitTarea(tarea5, &g_sTarea5,PRIORIDAD_3);
-	os_InitTarea(tarea6, &g_sTarea6,PRIORIDAD_3);
-
-	os_InitTarea(tarea4, &g_sTarea4,PRIORIDAD_1);
-
 	os_Init();
 
 	while (1) {
