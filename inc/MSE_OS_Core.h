@@ -101,8 +101,10 @@ typedef enum _estadoTarea estadoTarea;
  *******************************************************************************/
 
 enum _estadoOS  {
-	OS_NORMAL_RUN,
-	OS_FROM_RESET
+	OS_FROM_RESET,				//inicio luego de un reset
+	OS_NORMAL_RUN,				//estado del sistema corriendo una tarea
+	OS_SCHEDULING				//el OS esta efectuando un scheduling
+
 };
 
 typedef enum _estadoOS estadoOS;
@@ -135,7 +137,7 @@ struct _osControl  {
 	uint8_t cantTareas_prioridad[PRIORITY_COUNT];	//cada posicion contiene cuantas tareas tienen la misma prioridad
 
 	estadoOS estado_sistema;					//Informacion sobre el estado del OS
-	bool cambioContextoNecesario;				//Esta bandera indica si el scheduler determino un cambio de contexto
+	bool cambioContextoNecesario;
 
 	tarea *tarea_actual;				//definicion de puntero para tarea actual
 	tarea *tarea_siguiente;			//definicion de puntero para tarea siguiente

@@ -320,102 +320,109 @@ static void scheduler(void)  {
 	uint8_t cantBloqueadas_prioActual = 0;
 	bool salir = false;
 	uint8_t cant_bloqueadas = 0;
+	estadoOS estado_anterior;
 
 
 	/*
 	 * El scheduler recibe la informacion desde la variable estado_sistema si es el primer ingreso
-	 * desde el ultimo reset. Si esto es asi, se ejecuta por primera vez la tarea idle. Cambia desde
-	 * la ultima implementacion dado que cambio la forma de iterar sobre las tareas gracias a las
-	 * prioridades.
+	 * desde el ultimo reset. Si esto es asi, se carga como tarea actual la tarea idle. Esto es
+	 * mas prolijo que tener una bandera para cada situacion.
 	 * Es necesario que el vector que lleva los indices de las tareas este a cero antes de comenzar
 	 * lo que se logra con la funcion memset()
 	 */
 	if (control_OS.estado_sistema == OS_FROM_RESET)  {
 		control_OS.tarea_actual = (tarea*) &tareaIdle;
-		control_OS.cambioContextoNecesario = true;
 		memset(indicePrioridad,0,sizeof(uint8_t) * PRIORITY_COUNT);
+		control_OS.estado_sistema = OS_NORMAL_RUN;
 	}
-	else {
+
+	/*
+	 * Se comienza a iterar sobre el vector de tareas, pero teniendo en cuenta las
+	 * prioridades de las tareas.
+	 * En esta implementacion, durante la ejecucion de os_Init() se aplica la
+	 * tecnica de quicksort sobre el vector que contiene la lista de tareas
+	 * y se ordenan los punteros a tareas segun la prioridad que tengan. Los
+	 * punteros a tareas quedan ordenados de mayor a menor prioridad.
+	 * Gracias a eso, dividiendo el vector de punteros en cuantas prioridades haya
+	 * podemos recorrer estas subsecciones manteniendo indices para cada prioridad
+	 *
+	 * La mecanica de RoundRobin para tareas de igual prioridad se mantiene,
+	 * asimismo la determinacion de cuando la tarea idle debe ser ejecutada. Cuando
+	 * se recorren todas las tareas de una prioridad y todas estan bloqueadas, entonces
+	 * se pasa a la prioridad menor siguiente
+	 *
+	 * Recordar que aunque todas las tareas definidas por el usuario esten bloqueadas
+	 * la tarea Idle solamente puede tomar estados READY y RUNNING.
+	 */
+
+
+	/*
+	 * Puede darse el caso en que se haya invocado la funcion os_CpuYield() la cual hace una
+	 * llamada al scheduler. Si durante la ejecucion del scheduler (la cual fue forzada) y
+	 * esta siendo atendida en modo Thread ocurre una excepcion dada por el SysTick, habra una
+	 * instancia del scheduler pendiente en modo trhead y otra corriendo en modo Handler invocada
+	 * por el SysTick. Para evitar un doble scheduling, se controla que el sistema no este haciendo
+	 * uno ya. En caso afirmativo se vuelve prematuramente
+	 */
+	if (control_OS.estado_sistema == OS_SCHEDULING)  {
+		return;
+	}
+
+	/*
+	 * Cambia el estado del sistema para que no se produzcan schedulings anidados cuando
+	 * existen forzados por alguna API del sistema.
+	 */
+	control_OS.estado_sistema = OS_SCHEDULING;
+
+	/*
+	 * Como la determinacion de cuantas funciones estan en READY o BLOCKED es dinamica,
+	 * se hace un bucle con un testigo para salir de el
+	 */
+	while(!salir)  {
 
 		/*
-		 * En el caso que no sea el primer ingreso desde el reset, se comienza a
-		 * iterar sobre el vector de tareas, pero teniendo en cuenta las prioridades
-		 * de las tareas.
-		 * En esta implementacion, durante la ejecucion de os_Init() se aplica la
-		 * tecnica de quicksort sobre el vector que contiene la lista de tareas
-		 * y se ordenan los punteros a tareas segun la prioridad que tengan. Los
-		 * punteros a tareas quedan ordenados de mayor a menor prioridad.
-		 * Gracias a eso, dividiendo el vector de punteros en cuantas prioridades haya
-		 * podemos recorrer estas subsecciones manteniendo indices para cada prioridad
-		 *
-		 * La mecanica de RoundRobin para tareas de igual prioridad se mantiene,
-		 * asimismo la determinacion de cuando la tarea idle debe ser ejecutada. Cuando
-		 * se recorren todas las tareas de una prioridad y todas estan bloqueadas, entonces
-		 * se pasa a la prioridad menor siguiente
-		 *
-		 * Recordar que aunque todas las tareas definidas por el usuario esten bloqueadas
-		 * la tarea Idle solamente puede tomar estados READY y RUNNING.
+		 * La variable indiceArrayTareas contiene la posicion real dentro del array listaTareas
+		 * de la tarea siguiente a ser ejecutada. Se inicializa en 0
 		 */
+		indiceArrayTareas = 0;
 
 		/*
-		 * Como la determinacion de cuantas funciones estan en READY o BLOCKED es dinamica,
-		 * se hace un bucle con un testigo para salir de el
+		 * Puede darse el caso de que se hayan definido tareas de prioridades no contiguas, por
+		 * ejemplo dos tareas de maxima prioridad y una de minima prioridad. Quiere decir que no
+		 * existen tareas con prioridades entre estas dos. Este bloque if determina si existen
+		 * funciones para la prioridad actual. Si no existen, se pasa a la prioridad menor
+		 * siguiente
 		 */
-		while(!salir)  {
+		if(control_OS.cantTareas_prioridad[prioridad_actual] > 0)  {
 
 			/*
-			 * La variable indiceArrayTareas contiene la posicion real dentro del array listaTareas
-			 * de la tarea siguiente a ser ejecutada. Se inicializa en 0
+			 * esta linea asegura que el indice siempre este dentro de los limites de la subseccion
+			 * que forman los punteros a las tareas de prioridad actual
 			 */
-			indiceArrayTareas = 0;
+			indicePrioridad[prioridad_actual] %= control_OS.cantTareas_prioridad[prioridad_actual];
 
 			/*
-			 * Puede darse el caso de que se hayan definido tareas de prioridades no contiguas, por
-			 * ejemplo dos tareas de maxima prioridad y una de minima prioridad. Quiere decir que no
-			 * existen tareas con prioridades entre estas dos. Este bloque if determina si existen
-			 * funciones para la prioridad actual. Si no existen, se pasa a la prioridad menor
-			 * siguiente
+			 * El bucle for hace una conversion de indices de subsecciones al indice real que debe
+			 * usarse sobre el vector de punteros a tareas. Cuando se baja de prioridad debe sumarse
+			 * el total de tareas que existen en la subseccion anterior. Recordar que el vector de
+			 * tareas esta ordenado de mayor a menor
 			 */
-			if(control_OS.cantTareas_prioridad[prioridad_actual] > 0)  {
-
-				/*
-				 * esta linea asegura que el indice siempre este dentro de los limites de la subseccion
-				 * que forman los punteros a las tareas de prioridad actual
-				 */
-				indicePrioridad[prioridad_actual] %= control_OS.cantTareas_prioridad[prioridad_actual];
-
-				/*
-				 * El bucle for hace una conversion de indices de subsecciones al indice real que debe
-				 * usarse sobre el vector de punteros a tareas. Cuando se baja de prioridad debe sumarse
-				 * el total de tareas que existen en la subseccion anterior. Recordar que el vector de
-				 * tareas esta ordenado de mayor a menor
-				 */
-				for (int i=0; i<prioridad_actual;i++) {
-					indiceArrayTareas += control_OS.cantTareas_prioridad[i];
-				}
-				indiceArrayTareas += indicePrioridad[prioridad_actual];
+			for (int i=0; i<prioridad_actual;i++) {
+				indiceArrayTareas += control_OS.cantTareas_prioridad[i];
+			}
+			indiceArrayTareas += indicePrioridad[prioridad_actual];
 
 
-				/*
-				 * Una vez obtenido el indice real, antes de ejecutar el swich implementado
-				 * anteriormente, se hace un check de si la tarea estaba bloqueada por un
-				 * delay. La logica no es afectada porque el recorrido en el array listadoTareas
-				 * se efectua de igual manera, cualquiera sea el estado de las tareas.
-				 */
-				if ( ((tarea*)control_OS.listaTareas[indiceArrayTareas])->ticks_bloqueada == 0 &&
-					 ((tarea*)control_OS.listaTareas[indiceArrayTareas])->estado == TAREA_BLOCKED )  {
 
-					((tarea*)control_OS.listaTareas[indiceArrayTareas])->estado = TAREA_READY;
-				}
 
-				switch (((tarea*)control_OS.listaTareas[indiceArrayTareas])->estado) {
+			switch (((tarea*)control_OS.listaTareas[indiceArrayTareas])->estado) {
 
-				case TAREA_READY:
-					control_OS.tarea_siguiente = (tarea*) control_OS.listaTareas[indiceArrayTareas];
-					control_OS.cambioContextoNecesario = true;
-					indicePrioridad[prioridad_actual]++;
-					salir = true;
-					break;
+			case TAREA_READY:
+				control_OS.tarea_siguiente = (tarea*) control_OS.listaTareas[indiceArrayTareas];
+				control_OS.cambioContextoNecesario = true;
+				indicePrioridad[prioridad_actual]++;
+				salir = true;
+				break;
 
 				/*
 				 * Para el caso de las tareas bloqueadas, la variable cantBloqueadas_prioActual se utiliza
@@ -424,52 +431,64 @@ static void scheduler(void)  {
 				 * hasta que encuentra una tarea en READY.
 				 * La determinacion de la necesidad de ejecucion de la tarea idle sigue siendo la misma.
 				 */
-				case TAREA_BLOCKED:
-					cant_bloqueadas++;
-					cantBloqueadas_prioActual++;
-					indicePrioridad[prioridad_actual]++;
-					if (cant_bloqueadas == control_OS.cantidad_Tareas)  {
-						control_OS.tarea_siguiente = &tareaIdle;
-						control_OS.cambioContextoNecesario = true;
-						salir = true;
-					}
-					else {
-						if(cantBloqueadas_prioActual == control_OS.cantTareas_prioridad[prioridad_actual])  {
-							cantBloqueadas_prioActual = 0;
-							indicePrioridad[prioridad_actual] = 0;
-							prioridad_actual++;
-						}
-					}
-					break;
-
-					/*
-					 * El unico caso que la siguiente tarea este en estado RUNNING es que
-					 * todas las demas tareas excepto la tarea corriendo actualmente esten en
-					 * estado BLOCKED, con lo que un cambio de contexto no es necesario, porque
-					 * se sigue ejecutando la misma tarea
-					 */
-				case TAREA_RUNNING:
-					indicePrioridad[prioridad_actual]++;
-					control_OS.cambioContextoNecesario = false;
+			case TAREA_BLOCKED:
+				cant_bloqueadas++;
+				cantBloqueadas_prioActual++;
+				indicePrioridad[prioridad_actual]++;
+				if (cant_bloqueadas == control_OS.cantidad_Tareas)  {
+					control_OS.tarea_siguiente = &tareaIdle;
+					control_OS.cambioContextoNecesario = true;
 					salir = true;
-					break;
-
-					/*
-					 * En el caso que lleguemos al caso default, la tarea tomo un estado
-					 * el cual es invalido, por lo que directamente se llama errorHook
-					 * y se actualiza la variable de ultimo error
-					 */
-				default:
-					control_OS.error = ERR_OS_SCHEDULING;
-					errorHook(scheduler);
 				}
-			}
-			else {
-				indicePrioridad[prioridad_actual] = 0;
-				prioridad_actual++;
+				else {
+					if(cantBloqueadas_prioActual == control_OS.cantTareas_prioridad[prioridad_actual])  {
+						cantBloqueadas_prioActual = 0;
+						indicePrioridad[prioridad_actual] = 0;
+						prioridad_actual++;
+					}
+				}
+				break;
+
+				/*
+				 * El unico caso que la siguiente tarea este en estado RUNNING es que
+				 * todas las demas tareas excepto la tarea corriendo actualmente esten en
+				 * estado BLOCKED, con lo que un cambio de contexto no es necesario, porque
+				 * se sigue ejecutando la misma tarea
+				 */
+			case TAREA_RUNNING:
+				indicePrioridad[prioridad_actual]++;
+				control_OS.cambioContextoNecesario = false;
+				salir = true;
+				break;
+
+				/*
+				 * En el caso que lleguemos al caso default, la tarea tomo un estado
+				 * el cual es invalido, por lo que directamente se llama errorHook
+				 * y se actualiza la variable de ultimo error
+				 */
+			default:
+				control_OS.error = ERR_OS_SCHEDULING;
+				errorHook(scheduler);
 			}
 		}
+		else {
+			indicePrioridad[prioridad_actual] = 0;
+			prioridad_actual++;
+		}
 	}
+
+	/*
+	 * Antes de salir del scheduler se devuelve el sistema a su estado normal
+	 */
+	control_OS.estado_sistema = OS_NORMAL_RUN;
+
+	/*
+	 * Se checkea la bandera correspondiente para verificar si es necesario un cambio de
+	 * contexto. En caso afirmativo, se lanza PendSV
+	 */
+
+	if(control_OS.cambioContextoNecesario)
+		setPendSV();
 }
 
 
@@ -486,17 +505,25 @@ static void scheduler(void)  {
 ***************************************************************************************************/
 void SysTick_Handler(void)  {
 	uint8_t i;
+	tarea* task;		//variable para legibilidad
 
 	/*
 	 * Systick se encarga de actualizar todos los temporizadores por lo que se recorren
 	 * todas las tareas que esten definidas y si tienen un valor de ticks de bloqueo mayor
-	 * a cero, se decrementan en una unidad.
+	 * a cero, se decrementan en una unidad. Si este contador llega a cero, entonces
+	 * se debe pasar la tarea a READY. Es conveniente hacerlo aqui dado que la condicion
+	 * de que pase a descontar el ultimo tick se da en esta porcion de codigo
 	 */
 	i = 0;
-	while (control_OS.listaTareas[i] != NULL)  {
 
-		if( ((tarea*)control_OS.listaTareas[i])->ticks_bloqueada > 0 )
-			((tarea*)control_OS.listaTareas[i])->ticks_bloqueada--;
+	while (control_OS.listaTareas[i] != NULL)  {
+		task = (tarea*)control_OS.listaTareas[i];
+
+		if( task->ticks_bloqueada > 0 )  {
+			if((--task->ticks_bloqueada == 0) && (task->estado == TAREA_BLOCKED))  {
+				task->estado = TAREA_READY;
+			}
+		}
 
 		i++;
 	}
@@ -509,14 +536,6 @@ void SysTick_Handler(void)  {
 	 */
 
 	scheduler();
-
-	/*
-	 * Se checkea la bandera correspondiente para verificar si es necesario un cambio de
-	 * contexto. En caso afirmativo, se lanza PendSV
-	 */
-
-	if(control_OS.cambioContextoNecesario)
-		setPendSV();
 
 
 	/*
@@ -540,6 +559,14 @@ void SysTick_Handler(void)  {
 	 *  @return     None
 ***************************************************************************************************/
 static void setPendSV(void)  {
+
+	/*
+	 * Se indica en la estructura del OS que el cambio de contexto se esta por invocar
+	 * Se hace antes de setear PendSV para no interferir con las barreras de datos
+	 * y memoria
+	 */
+	control_OS.cambioContextoNecesario = false;
+
 	/**
 	 * Se setea el bit correspondiente a la excepcion PendSV
 	 */
@@ -574,48 +601,33 @@ static void setPendSV(void)  {
 uint32_t getContextoSiguiente(uint32_t sp_actual)  {
 	uint32_t sp_siguiente;
 
-
 	/*
-	 * En la primera llamada a getContextoSiguiente, se designa que la primer tarea a ejecutar sea
-	 * la tarea actual, la cual es la primer tarea inicializada y cuyo puntero de estructura fuese
-	 * cargado por la funcion scheduler (observar flujo de programa). Como todas las tareas se crean
-	 * en estado READY, directamente se cambia a estado RUNNING y se actualiza la variable de estado
-	 * de sistema
+	 * Esta funcion efectua el cambio de contexto. Se guarda el MSP (sp_actual) en la variable
+	 * correspondiente de la estructura de la tarea corriendo actualmente. Ahora que el estado
+	 * BLOCKED esta implementado, se debe hacer un assert de si la tarea actual fue expropiada
+	 * mientras estaba corriendo o si la expropiacion fue hecha de manera prematura dado que
+	 * paso a estado BLOCKED. En el segundo caso, solamente se puede pasar de BLOCKED a READY
+	 * a partir de un evento. Se carga en la variable sp_siguiente el stack pointer de la
+	 * tarea siguiente, que fue definida por el scheduler. Se actualiza la misma a estado RUNNING
+	 * y se retorna al handler de PendSV
 	 */
 
-	if (control_OS.estado_sistema == OS_FROM_RESET)  {
-		sp_siguiente = control_OS.tarea_actual->stack_pointer;
-		control_OS.tarea_actual->estado = TAREA_RUNNING;
-		control_OS.estado_sistema = OS_NORMAL_RUN;
-	}
+	control_OS.tarea_actual->stack_pointer = sp_actual;
 
-	/*
-	 * En el caso que no sea la primera vez que se ejecuta esta funcion, se hace un cambio de contexto
-	 * de manera habitual. Se guarda el MSP (sp_actual) en la variable correspondiente de la estructura
-	 * de la tarea corriendo actualmente. Ahora que el estado BLOCKED esta implementado, se debe hacer
-	 * un assert de si la tarea actual fue expropiada mientras estaba corriendo o si la expropiacion
-	 * fue hecha de manera prematura dado que paso a estado BLOCKED. En el segundo caso, solamente
-	 * se puede pasar de BLOCKED a READY a partir de un evento.
-	 * Se carga en la variable sp_siguiente el stack pointer de la tarea siguiente, que fue definida
-	 * por el scheduler. Se actualiza la misma a estado RUNNING y se retorna al handler de PendSV
-	 */
-	else {
-		control_OS.tarea_actual->stack_pointer = sp_actual;
+	if (control_OS.tarea_actual->estado == TAREA_RUNNING)
+		control_OS.tarea_actual->estado = TAREA_READY;
 
-		if (control_OS.tarea_actual->estado == TAREA_RUNNING)
-			control_OS.tarea_actual->estado = TAREA_READY;
+	sp_siguiente = control_OS.tarea_siguiente->stack_pointer;
 
-		sp_siguiente = control_OS.tarea_siguiente->stack_pointer;
+	control_OS.tarea_actual = control_OS.tarea_siguiente;
+	control_OS.tarea_actual->estado = TAREA_RUNNING;
 
-		control_OS.tarea_actual = control_OS.tarea_siguiente;
-		control_OS.tarea_actual->estado = TAREA_RUNNING;
-	}
 
 	/*
 	 * Indicamos que luego de retornar de esta funcion, ya no es necesario un cambio de contexto
 	 * porque se acaba de gestionar.
 	 */
-	control_OS.cambioContextoNecesario = false;
+	control_OS.estado_sistema = OS_NORMAL_RUN;
 
 	return sp_siguiente;
 }
@@ -635,8 +647,6 @@ uint32_t getContextoSiguiente(uint32_t sp_actual)  {
 ***************************************************************************************************/
 void os_CpuYield(void)  {
 	scheduler();
-	if(control_OS.cambioContextoNecesario)
-		setPendSV();
 }
 
 
