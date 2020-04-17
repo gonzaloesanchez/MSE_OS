@@ -21,7 +21,7 @@
 tarea g_sTarea1, g_sTarea2, g_sTarea3;	//prioridad 0
 tarea g_sBotones;	//prioridad 3
 
-osSemaforo colaTarea1, colaTarea2;
+osCola colaTarea1, colaTarea2;
 
 struct _mydata  {
 	float dato_float;

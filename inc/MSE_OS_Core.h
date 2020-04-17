@@ -140,6 +140,7 @@ struct _osControl  {
 
 	estadoOS estado_sistema;					//Informacion sobre el estado del OS
 	bool cambioContextoNecesario;
+	int16_t contador_critico;					//Contador de secciones criticas solicitadas
 
 	tarea *tarea_actual;				//definicion de puntero para tarea actual
 	tarea *tarea_siguiente;			//definicion de puntero para tarea siguiente
@@ -154,6 +155,10 @@ void os_Init(void);
 int32_t os_getError(void);
 tarea* os_getTareaActual(void);
 void os_CpuYield(void);
+
+void os_enter_critical(void);
+void os_exit_critical(void);
+
 
 
 

@@ -51,6 +51,10 @@ PendSV_Handler:
 	* se hace el push de los registros de FPU restantes
 	*/
 
+	// !!!!!!!!!!!!!!!!!! seccion critica !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+	cpsid i				//disable interrupts global
+
 	tst lr,0x10
 	it eq
 	vpusheq {s16-s31}
@@ -71,5 +75,9 @@ PendSV_Handler:
 	tst lr,0x10
 	it eq
 	vpopeq {s16-s31}
+
+	// ------------------ Fin de la seccion critica -----------------------------------------
+	cpsie i				//enable interrupts global
+
 	bx lr					//se hace un branch indirect con el valor de LR que es nuevamente EXEC_RETURN
 

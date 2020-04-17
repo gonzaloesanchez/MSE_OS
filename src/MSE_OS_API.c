@@ -23,19 +23,22 @@ void os_Delay(uint32_t ticks)  {
 	tarea* tarea_actual;
 
 	/*
-	 * La estructura control_OS solo puede ser accedida desde el archivo core, por lo que
-	 * se provee una funcion para obtener la tarea actual (equivale a acceder a
-	 * control_OS.tarea_actual)
+	 * En esta version se modifica la funcion delay en algunos aspectos:
+	 * 1) Ya no es necesario corroborar que la funcion este en RUNNING al momento de cargar los
+	 * ticks dado que la obtencion del puntero a la estructura de la tarea y la asignacion
+	 * de ticks se hace dentro de una seccion critica
+	 * 2) Nada del codigo se ejecuta si la variable ticks vale 0
 	 */
-	tarea_actual = os_getTareaActual();
 
-	/*
-	 * Se carga la cantidad de ticks a la tarea actual si la misma esta en running
-	 * y si los ticks son mayores a cero
-	 */
-	if (tarea_actual->estado == TAREA_RUNNING && ticks > 0)  {
+	if(ticks > 0)  {
+		os_enter_critical();
 
+		//!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+		tarea_actual = os_getTareaActual();
 		tarea_actual->ticks_bloqueada = ticks;
+		//----------------------------------------------------------------------------------------------------
+
+		os_exit_critical();
 
 		/*
 		 * El proximo bloque while tiene la finalidad de asegurarse que la tarea solo se desbloquee
@@ -85,40 +88,41 @@ void os_SemaforoTake(osSemaforo* sem)  {
 	tarea* tarea_actual;
 
 	/*
-	 * La estructura control_OS solo puede ser accedida desde el archivo core, por lo que
-	 * se provee una funcion para obtener la tarea actual (equivale a acceder a
-	 * control_OS.tarea_actual)
+	 * En el caso de que otra tarea desbloquee por error la tarea que se acaba de
+	 * bloquear con el semaforo (en el caso que este tomado) el bloque while se
+	 * encarga de volver a bloquearla hasta tanto no se haga un give
 	 */
-	tarea_actual = os_getTareaActual();
-
-	if (tarea_actual->estado == TAREA_RUNNING)  {
+	while (!Salir)  {
 
 		/*
-		 * En el caso de que otra tarea desbloquee por error la tarea que se acaba de
-		 * bloquear con el semaforo (en el caso que este tomado) el bloque while se
-		 * encarga de volver a bloquearla hasta tanto no se haga un give
+		 * Si el semaforo esta tomado, la tarea actual debe bloquearse y se
+		 * mantiene un puntero a la estructura de la tarea actual, la que
+		 * recibe el nombre de tarea asociada. Luego se hace un CPU yield
+		 * dado que no se necesita mas el CPU hasta que se libere el semaforo.
+		 *
+		 * Si el semaforo estaba libre, solamente se marca como tomado y se
+		 * retorna.
+		 *
+		 * Se agrega una seccion critica al momento de obtener la tarea actual e
+		 * interactuar con su estado
 		 */
-		while (!Salir)  {
+		if(sem->tomado)  {
+			os_enter_critical();
 
-			/*
-			 * Si el semaforo esta tomado, la tarea actual debe bloquearse y se
-			 * mantiene un puntero a la estructura de la tarea actual, la que
-			 * recibe el nombre de tarea asociada. Luego se hace un CPU yield
-			 * dado que no se necesita mas el CPU hasta que se libere el semaforo.
-			 *
-			 * Si el semaforo estaba libre, solamente se marca como tomado y se
-			 * retorna
-			 */
-			if(sem->tomado)  {
-				tarea_actual->estado = TAREA_BLOCKED;
-				sem->tarea_asociada = tarea_actual;
-				os_CpuYield();
-			}
-			else  {
-				sem->tomado = true;
-				Salir = true;
-			}
+			//!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+			tarea_actual = os_getTareaActual();
+			tarea_actual->estado = TAREA_BLOCKED;
+			sem->tarea_asociada = tarea_actual;
+			//---------------------------------------------------------------------------
+
+			os_exit_critical();
+			os_CpuYield();
 		}
+		else  {
+			sem->tomado = true;
+			Salir = true;
+		}
+
 	}
 }
 
@@ -134,20 +138,14 @@ void os_SemaforoTake(osSemaforo* sem)  {
 	 *  @return     None.
  *******************************************************************************/
 void os_SemaforoGive(osSemaforo* sem)  {
-	tarea* tarea_actual;
-
-	tarea_actual = os_getTareaActual();
 
 	/*
-	 * Por seguridad, se deben hacer varios checkeos antes de hacer un give sobre
-	 * el semaforo. En el caso de que se den todas las condiciones, se libera y se
-	 * actualiza la tarea correspondiente a estado ready.
+	 * Por seguridad, se deben hacer dos checkeos antes de hacer un give sobre
+	 * el semaforo. En el caso de que se ambas condiciones sean verdaderas, se
+	 * libera y se actualiza la tarea correspondiente a estado ready.
 	 */
 
-	if (tarea_actual->estado == TAREA_RUNNING &&
-			sem->tomado == true &&
-			sem->tarea_asociada != NULL)  {
-
+	if (sem->tomado == true &&	sem->tarea_asociada != NULL)  {
 		sem->tomado = false;
 		sem->tarea_asociada->estado = TAREA_READY;
 	}
@@ -217,17 +215,10 @@ void os_ColaWrite(osCola* cola, void* dato)  {
 
 	if(((cola->indice_head == cola->indice_tail) && cola->tarea_asociada != NULL) &&
 		cola->tarea_asociada->estado == TAREA_BLOCKED)  {
-			cola->tarea_asociada->estado = TAREA_READY;
+
+		cola->tarea_asociada->estado = TAREA_READY;
 	}
 
-	/*
-	 * Se obtiene el puntero a la estructura de la tarea corriendo actualmente
-	 * y se checkea que este corriendo actualmente (solamente para evitar
-	 * el caso en que en el instante entre la llamada a os_getTareaActual() y el bloque if
-	 * se haga un scheduling y la tarea actual pase a READY (EXTREMADAMENTE RARO)
-	 */
-	tarea_actual = os_getTareaActual();
-	if(tarea_actual->estado == TAREA_RUNNING)  {
 
 		/*
 		 * El siguiente bloque while determina que hasta que la cola no tenga lugar
@@ -236,11 +227,16 @@ void os_ColaWrite(osCola* cola, void* dato)  {
 		 */
 
 		while((cola->indice_head + 1) % elementos_total == cola->indice_tail)  {
-			/*
-			 * La cola esta llena. queda atrapado en este bloque
-			 */
+
+			os_enter_critical();
+
+			//!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+			tarea_actual = os_getTareaActual();
 			tarea_actual->estado = TAREA_BLOCKED;
 			cola->tarea_asociada = tarea_actual;
+			//---------------------------------------------------------------------------
+
+			os_exit_critical();
 			os_CpuYield();
 		}
 
@@ -257,7 +253,6 @@ void os_ColaWrite(osCola* cola, void* dato)  {
 		memcpy(cola->data+index_h,dato,cola->size_elemento);
 		cola->indice_head = (cola->indice_head + 1) % elementos_total;
 		cola->tarea_asociada = NULL;
-	}
 }
 
 void os_ColaRead(osCola* cola, void* dato)  {
@@ -286,45 +281,43 @@ void os_ColaRead(osCola* cola, void* dato)  {
 	if((( (cola->indice_head + 1) % elementos_total == cola->indice_tail) &&
 			cola->tarea_asociada != NULL) &&
 			cola->tarea_asociada->estado == TAREA_BLOCKED)  {
+
 		cola->tarea_asociada->estado = TAREA_READY;
 	}
 
+
 	/*
-	 * Se obtiene el puntero a la estructura de la tarea corriendo actualmente
-	 * y se checkea que este corriendo actualmente (solamente para evitar
-	 * el caso en que en el instante entre la llamada a os_getTareaActual() y el bloque if
-	 * se haga un scheduling y la tarea actual pase a READY (EXTREMADAMENTE RARO)
+	 * El siguiente bloque while determina que hasta que la cola no tenga un dato
+	 * disponible, no se avance. Si no hay un dato que leer, se bloquea la tarea
+	 * actual que es la que esta tratando de leer un dato y luego se hace un yield
 	 */
-	tarea_actual = os_getTareaActual();
-	if(tarea_actual->estado == TAREA_RUNNING)  {
-		/*
-		 * El siguiente bloque while determina que hasta que la cola no tenga un dato
-		 * disponible, no se avance. Si no hay un dato que leer, se bloquea la tarea
-		 * actual que es la que esta tratando de leer un dato y luego se hace un yield
-		 */
 
-		while(cola->indice_head == cola->indice_tail)  {
-			/*
-			 * La cola esta llena. queda atrapado en este bloque
-			 */
-			tarea_actual->estado = TAREA_BLOCKED;
-			cola->tarea_asociada = tarea_actual;
-			os_CpuYield();
-		}
+	while(cola->indice_head == cola->indice_tail)  {
+		os_enter_critical();
 
-		/*
-		 * Si la cola tiene datos, se lee mediante la funcion memcpy que copia un
-		 * bloque completo de memoria iniciando desde la direccion apuntada por el
-		 * primer elemento. Como data es un vector del tipo uint8_t, la aritmetica
-		 * de punteros es byte a byte (consecutivos) y se logra el efecto deseado
-		 * Esto permite guardar datos definidos por el usuario, como ser estructuras
-		 * de datos completas. Luego se actualiza el undice head y se limpia la tarea
-		 * asociada, dado que ese puntero ya no tiene utilidad
-		 */
+		//!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+		tarea_actual = os_getTareaActual();
+		tarea_actual->estado = TAREA_BLOCKED;
+		cola->tarea_asociada = tarea_actual;
+		//---------------------------------------------------------------------------
 
-		memcpy(dato,cola->data+index_t,cola->size_elemento);
-		cola->indice_tail = (cola->indice_tail + 1) % elementos_total;
-		cola->tarea_asociada = NULL;
+		os_exit_critical();
+		os_CpuYield();
 	}
+
+	/*
+	 * Si la cola tiene datos, se lee mediante la funcion memcpy que copia un
+	 * bloque completo de memoria iniciando desde la direccion apuntada por el
+	 * primer elemento. Como data es un vector del tipo uint8_t, la aritmetica
+	 * de punteros es byte a byte (consecutivos) y se logra el efecto deseado
+	 * Esto permite guardar datos definidos por el usuario, como ser estructuras
+	 * de datos completas. Luego se actualiza el undice head y se limpia la tarea
+	 * asociada, dado que ese puntero ya no tiene utilidad
+	 */
+
+	memcpy(dato,cola->data+index_t,cola->size_elemento);
+	cola->indice_tail = (cola->indice_tail + 1) % elementos_total;
+	cola->tarea_asociada = NULL;
+
 }
 

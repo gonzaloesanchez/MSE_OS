@@ -666,6 +666,47 @@ tarea* os_getTareaActual(void)  {
 }
 
 
+
+
+/*************************************************************************************************
+	 *  @brief Marca el inicio de una seccion como seccion critica.
+     *
+     *  @details
+     *   Las secciones criticas son aquellas que deben ejecutar operaciones atomicas, es decir que
+     *   no pueden ser interrumpidas. Con llamar a esta funcion, se otorga soporte en el OS
+     *   para marcar un bloque de codigo como atomico
+     *
+	 *  @param 		None
+	 *  @return     None
+	 *  @see 		os_exit_critical
+***************************************************************************************************/
+inline void os_enter_critical()  {
+	__disable_irq();
+	control_OS.contador_critico++;
+}
+
+
+/*************************************************************************************************
+	 *  @brief Marca el final de una seccion como seccion critica.
+     *
+     *  @details
+     *   Las secciones criticas son aquellas que deben ejecutar operaciones atomicas, es decir que
+     *   no pueden ser interrumpidas. Con llamar a esta funcion, se otorga soporte en el OS
+     *   para marcar un bloque de codigo como atomico
+     *
+	 *  @param 		None
+	 *  @return     None
+	 *  @see 		os_enter_critical
+***************************************************************************************************/
+inline void os_exit_critical()  {
+	if (--control_OS.contador_critico <= 0)  {
+		control_OS.contador_critico = 0;
+		__enable_irq();
+	}
+}
+
+
+
 /*************************************************************************************************
 	 *  @brief Ordena tareas de mayor a menor prioridad.
      *
