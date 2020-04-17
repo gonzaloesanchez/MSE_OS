@@ -73,6 +73,8 @@
 
 #define PRIORITY_COUNT		(MIN_PRIORITY-MAX_PRIORITY)+1	//cantidad de prioridades asignables
 
+#define QUEUE_HEAP_SIZE		64			//cantidad de bytes reservados por cada cola definida
+
 
 
 /*==================[definicion codigos de error de OS]=================================*/
