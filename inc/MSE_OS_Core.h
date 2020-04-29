@@ -77,9 +77,13 @@
 
 
 
-/*==================[definicion codigos de error de OS]=================================*/
+/*==================[definicion codigos de error y warning de OS]=================================*/
 #define ERR_OS_CANT_TAREAS		-1
 #define ERR_OS_SCHEDULING		-2
+#define ERR_OS_DELAY_FROM_ISR	-3
+
+#define WARN_OS_QUEUE_FULL_ISR	-100
+#define WARN_OS_QUEUE_EMPTY_ISR	-101
 
 
 
@@ -105,7 +109,8 @@ typedef enum _estadoTarea estadoTarea;
 enum _estadoOS  {
 	OS_FROM_RESET,				//inicio luego de un reset
 	OS_NORMAL_RUN,				//estado del sistema corriendo una tarea
-	OS_SCHEDULING				//el OS esta efectuando un scheduling
+	OS_SCHEDULING,				//el OS esta efectuando un scheduling
+	OS_IRQ_RUN					//El OS esta corriendo un Handler
 
 };
 
@@ -140,6 +145,7 @@ struct _osControl  {
 
 	estadoOS estado_sistema;					//Informacion sobre el estado del OS
 	bool cambioContextoNecesario;
+	bool schedulingFromIRQ;						//esta bandera se utiliza para la atencion a interrupciones
 	int16_t contador_critico;					//Contador de secciones criticas solicitadas
 
 	tarea *tarea_actual;				//definicion de puntero para tarea actual
@@ -154,6 +160,11 @@ void os_InitTarea(void *entryPoint, tarea *task, uint8_t prioridad);
 void os_Init(void);
 int32_t os_getError(void);
 tarea* os_getTareaActual(void);
+estadoOS os_getEstadoSistema(void);
+void os_setEstadoSistema(estadoOS estado);
+void os_setScheduleDesdeISR(bool value);
+bool os_getScheduleDesdeISR(void);
+void os_setError(int32_t err, void* caller);
 void os_CpuYield(void);
 
 void os_enter_critical(void);

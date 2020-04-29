@@ -192,8 +192,7 @@ void os_InitTarea(void *entryPoint, tarea *task, uint8_t prioridad)  {
 		 * el ultimo error generado en la estructura de control del OS y se llama a errorHook y se
 		 * envia informacion de quien es quien la invoca.
 		 */
-		control_OS.error = ERR_OS_CANT_TAREAS;
-		errorHook(os_InitTarea);
+		os_setError(ERR_OS_CANT_TAREAS,os_InitTarea);
 	}
 }
 
@@ -463,12 +462,11 @@ static void scheduler(void)  {
 
 				/*
 				 * En el caso que lleguemos al caso default, la tarea tomo un estado
-				 * el cual es invalido, por lo que directamente se llama errorHook
-				 * y se actualiza la variable de ultimo error
+				 * el cual es invalido, por lo que directamente se levanta un error de
+				 * sistema actualizando la variable de ultimo error
 				 */
 			default:
-				control_OS.error = ERR_OS_SCHEDULING;
-				errorHook(scheduler);
+				os_setError(ERR_OS_SCHEDULING,scheduler);
 			}
 		}
 		else {
@@ -663,6 +661,105 @@ void os_CpuYield(void)  {
 ***************************************************************************************************/
 tarea* os_getTareaActual(void)  {
 	return control_OS.tarea_actual;
+}
+
+
+
+/*************************************************************************************************
+	 *  @brief Devuelve una copia del valor del estado de sistema.
+     *
+     *  @details
+     *   En aras de mantener la estructura de control aislada solo en el archivo de core esta
+     *   funcion proporciona una copia del estado de sistema actual
+     *
+	 *  @param 		None
+	 *  @return     estado del OS.
+***************************************************************************************************/
+estadoOS os_getEstadoSistema(void)  {
+	return control_OS.estado_sistema;
+}
+
+
+
+/*************************************************************************************************
+	 *  @brief Cambia el estado de sistema al pasado como argumento por esta funcion.
+     *
+     *  @details
+     *   En aras de mantener la estructura de control aislada solo en el archivo de core esta
+     *   funcion proporciona una manera de actualizar el estado del sistema en otros archivos
+     *
+	 *  @param 		None
+	 *  @return     estado del OS.
+***************************************************************************************************/
+void os_setEstadoSistema(estadoOS estado)  {
+	control_OS.estado_sistema = estado;
+}
+
+
+/*************************************************************************************************
+	 *  @brief Setea la bandera de scheduling desde ISR.
+     *
+     *  @details
+     *   En aras de mantener la estructura de control aislada solo en el archivo de core esta
+     *   funcion proporciona una forma de setear la bandera correspondiente a la necesidad
+     *   de ejecutar un scheduling antes de salir de una interrupcion
+     *
+	 *  @param 		value	El valor a escribir en la bandera correspondiente
+	 *  @return     none.
+***************************************************************************************************/
+void os_setScheduleDesdeISR(bool value)  {
+	control_OS.schedulingFromIRQ = value;
+}
+
+
+/*************************************************************************************************
+	 *  @brief Devuelve una copia del valor del estado de sistema.
+     *
+     *  @details
+     *   En aras de mantener la estructura de control aislada solo en el archivo de core esta
+     *   funcion proporciona una forma de obtener el valor de la bandera correspondiente a la
+     *   necesidad de ejecutar un scheduling antes de salir de una interrupcion
+     *
+	 *  @param 		None
+	 *  @return     Valor de la bandera correspondiente.
+***************************************************************************************************/
+bool os_getScheduleDesdeISR(void)  {
+	return control_OS.schedulingFromIRQ;
+}
+
+
+/*************************************************************************************************
+	 *  @brief Levanta un error de sistema.
+     *
+     *  @details
+     *   En aras de mantener la estructura de control aislada solo en el archivo de core esta
+     *   funcion proporciona una forma de setear el codigo de error y lanza una ejecucion
+     *   de errorHook
+     *
+	 *  @param 		err		El codigo de error que ha surgido
+	 *  @param		caller	Puntero a la funcion que llama a esta funcion
+	 *  @return     none.
+***************************************************************************************************/
+void os_setError(int32_t err, void* caller)  {
+	control_OS.error = err;
+	errorHook(caller);
+}
+
+
+/*************************************************************************************************
+	 *  @brief Levanta un error de sistema.
+     *
+     *  @details
+     *   En aras de mantener la estructura de control aislada solo en el archivo de core esta
+     *   funcion proporciona una forma de setear el codigo de warning. Se almacena en la misma
+     *   variable que error porque en OS sigue funcionando. En el caso de error, el OS deja de
+     *   funcionar, con lo que son dos casos mutuamente excluyentes.
+     *
+	 *  @param 		warn	El codigo de advertencia que ha surgido
+	 *  @return     none.
+***************************************************************************************************/
+void os_setWarning(int32_t warn)  {
+	control_OS.error = warn;
 }
 
 

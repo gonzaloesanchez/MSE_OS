@@ -16,22 +16,27 @@
 #define PRIORIDAD_1		1
 #define PRIORIDAD_3		3
 
+#define TEC1_PORT_NUM   0
+#define TEC1_BIT_VAL    4
+
+#define TEC2_PORT_NUM   0
+#define TEC2_BIT_VAL    8
+
 /*==================[Global data declaration]==============================*/
 
-tarea g_sTarea1, g_sTarea2, g_sTarea3;	//prioridad 0
-tarea g_sBotones;	//prioridad 3
+tarea g_sEncenderLed, g_sApagarLed;	//prioridad 0
+tarea g_sUart;	//prioridad 3
 
-osCola colaTarea1, colaTarea2;
+osCola colaUart;
 
-struct _mydata  {
-	float dato_float;
-	int32_t dato_int;
-	char letras[3];
-};
+osSemaforo semTecla1_descendente, semTecla1_ascendente;
 
 typedef struct _mydata my_data;
 
 /*==================[internal functions declaration]=========================*/
+
+void tecla1_down_ISR(void);
+void tecla1_up_ISR(void);
 
 /*==================[internal data definition]===============================*/
 
@@ -46,67 +51,78 @@ static void initHardware(void)  {
 	Board_Init();
 	SystemCoreClockUpdate();
 	SysTick_Config(SystemCoreClock / MILISEC);		//systick 1ms
+
+	/*
+	 * Seteamos la interrupcion 0 para el flanco descendente en la tecla 1
+	 */
+	Chip_SCU_GPIOIntPinSel( 0, TEC1_PORT_NUM, TEC1_BIT_VAL );
+	Chip_PININT_ClearIntStatus( LPC_GPIO_PIN_INT, PININTCH( 0 ) ); // INT0 flanco descendente
+	Chip_PININT_SetPinModeEdge( LPC_GPIO_PIN_INT, PININTCH( 0 ) );
+	Chip_PININT_EnableIntLow( LPC_GPIO_PIN_INT, PININTCH( 0 ) );
+
+	/*
+	 * Seteamos la interrupcion 1 para el flanco ascendente en la tecla 1
+	 */
+	Chip_SCU_GPIOIntPinSel( 1, TEC1_PORT_NUM, TEC1_BIT_VAL );
+	Chip_PININT_ClearIntStatus( LPC_GPIO_PIN_INT, PININTCH( 1 ) ); // INT1 flanc
+	Chip_PININT_SetPinModeEdge( LPC_GPIO_PIN_INT, PININTCH( 1 ) );
+	Chip_PININT_EnableIntHigh( LPC_GPIO_PIN_INT, PININTCH( 1 ) );
+
+	/* Inicializar UART_USB a 115200 baudios */
+	uartConfig( UART_USB, 115200 );
 }
 
 
 /*==================[Definicion de tareas para el OS]==========================*/
-void tarea1(void)  {
-	uint32_t i;
-	my_data datos;
+void encenderLed(void)  {
+	char msg[25];
+	uint8_t i;
+
+	strcpy(msg,"Se presiono la tecla 1\n\r");
 
 	while (1) {
 
-		os_ColaRead(&colaTarea1,&datos);
+		os_SemaforoTake(&semTecla1_descendente);
 		gpioWrite(LED1,true);
-		os_Delay(1000);
-		gpioWrite(LED1,false);
-		memset(&datos,0x00,sizeof(my_data));
 
+		i = 0;
+		while(msg[i] != NULL)  {
+			os_ColaWrite(&colaUart,(msg + i));
+			i++;
+		}
 	}
 }
 
-void tarea2(void)  {
-	uint32_t j;
-	my_data datos;
+void apagarLed(void)  {
+	char msg[25];
+	uint8_t i;
+
+	strcpy(msg,"Se solto la tecla 1\n\r");
 
 	while (1) {
 
-		os_ColaRead(&colaTarea2,&datos);
-		gpioWrite(LED2,true);
-		os_Delay(1000);
-		gpioWrite(LED2,false);
-		memset(&datos,0x00,sizeof(my_data));
+		os_SemaforoTake(&semTecla1_ascendente);
+		gpioWrite(LED1,false);
+
+		i = 0;
+		while(msg[i] != NULL)  {
+			os_ColaWrite(&colaUart,(msg + i));
+			i++;
+		}
 	}
 }
 
-void botones(void)  {
-	my_data datos_enviar;
 
-	/*
-	 * CUIDADO: asi como esta esto, en 1[s] se envian 10 datos a la cola
-	 */
+void uart(void)  {
+	char aux;
+
 	while(1)  {
-		if(!gpioRead( TEC1 ))  {
-			datos_enviar.dato_float = 3.1415;
-			datos_enviar.dato_int = -1;
-			datos_enviar.letras[0] = 'A';
-			datos_enviar.letras[1] = 'B';
-			datos_enviar.letras[2] = 'C';
-			os_ColaWrite(&colaTarea1,&datos_enviar);
-		}
-
-		if(!gpioRead( TEC2 ))  {
-			datos_enviar.dato_float = 2.7182;
-			datos_enviar.dato_int = -1000;
-			datos_enviar.letras[0] = 'E';
-			datos_enviar.letras[1] = 'F';
-			datos_enviar.letras[2] = 'G';
-			os_ColaWrite(&colaTarea2,&datos_enviar);
-		}
-
-		os_Delay(100);
+		os_ColaRead(&colaUart,&aux);
+		uartWriteByte(UART_USB,aux);
 	}
 }
+
+
 
 
 /*============================================================================*/
@@ -115,18 +131,31 @@ int main(void)  {
 
 	initHardware();
 
-	os_InitTarea(tarea1, &g_sTarea1,PRIORIDAD_0);
-	os_InitTarea(tarea2, &g_sTarea2,PRIORIDAD_0);
-	os_InitTarea(botones, &g_sBotones,PRIORIDAD_3);
+	os_InitTarea(encenderLed, &g_sEncenderLed,PRIORIDAD_0);
+	os_InitTarea(apagarLed, &g_sApagarLed,PRIORIDAD_0);
+	os_InitTarea(uart, &g_sUart,PRIORIDAD_3);
 
-	os_ColaInit(&colaTarea1,sizeof(my_data));
-	os_ColaInit(&colaTarea2,sizeof(my_data));
+	os_ColaInit(&colaUart,sizeof(char));
+	os_SemaforoInit(&semTecla1_ascendente);
+	os_SemaforoInit(&semTecla1_descendente);
 
-
+	os_InstalarIRQ(PIN_INT0_IRQn,tecla1_down_ISR);
+	os_InstalarIRQ(PIN_INT1_IRQn,tecla1_up_ISR);
 	os_Init();
 
 	while (1) {
 	}
+}
+
+
+void tecla1_down_ISR(void) {
+	os_SemaforoGive(&semTecla1_descendente);
+	Chip_PININT_ClearIntStatus( LPC_GPIO_PIN_INT, PININTCH( 0 ) );
+}
+
+void tecla1_up_ISR(void)  {
+	os_SemaforoGive(&semTecla1_ascendente);
+	Chip_PININT_ClearIntStatus( LPC_GPIO_PIN_INT, PININTCH( 1 ) );
 }
 
 /** @} doxygen end group definition */

@@ -18,9 +18,18 @@
      *
 	 *  @param		ticks	Cantidad de ticks de sistema que esta tarea debe estar bloqueada
 	 *  @return     None.
+	 *  @warning	No puede llamarse a delay desde un handler, produce un error de OS
 ***************************************************************************************************/
 void os_Delay(uint32_t ticks)  {
 	tarea* tarea_actual;
+
+	/*
+	 * Esta prohibido llamar esta funcion de API desde un handler, genera un error que
+	 * detiene el OS
+	 */
+	if(os_getEstadoSistema() == OS_IRQ_RUN)  {
+		os_setError(ERR_OS_DELAY_FROM_ISR,os_Delay);
+	}
 
 	/*
 	 * En esta version se modifica la funcion delay en algunos aspectos:
@@ -148,6 +157,13 @@ void os_SemaforoGive(osSemaforo* sem)  {
 	if (sem->tomado == true &&	sem->tarea_asociada != NULL)  {
 		sem->tomado = false;
 		sem->tarea_asociada->estado = TAREA_READY;
+
+		/*
+		 * Si es llamada desde una interrupcion, se debe indicar que es necesario efectuar
+		 * un scheduling, porque seguramente existe una tarea esperando este evento
+		 */
+		if (os_getEstadoSistema() == OS_IRQ_RUN)
+			 os_setScheduleDesdeISR(true);
 	}
 }
 
@@ -217,42 +233,62 @@ void os_ColaWrite(osCola* cola, void* dato)  {
 		cola->tarea_asociada->estado == TAREA_BLOCKED)  {
 
 		cola->tarea_asociada->estado = TAREA_READY;
+
+		/*
+		 * Si es llamada desde una interrupcion, se debe indicar que es necesario efectuar
+		 * un scheduling, porque seguramente existe una tarea esperando este evento
+		 */
+		if (os_getEstadoSistema() == OS_IRQ_RUN)
+			os_setScheduleDesdeISR(true);
+
 	}
 
 
-		/*
-		 * El siguiente bloque while determina que hasta que la cola no tenga lugar
-		 * disponible, no se avance. Si no tiene lugar se bloquea la tarea actual
-		 * que es la que esta tratando de escribir y luego se hace un yield
-		 */
 
-		while((cola->indice_head + 1) % elementos_total == cola->indice_tail)  {
+	 /*
+	 * En el caso de que se quiera escribir una cola desde un ISR y este
+	 * llena, la operacion es abortada (no se puede bloquear un handler)
+	 */
+	if (os_getEstadoSistema() == OS_IRQ_RUN &&
+			(cola->indice_head + 1) % elementos_total == cola->indice_tail)  {
 
-			os_enter_critical();
+		os_setWarning(WARN_OS_QUEUE_FULL_ISR);
+		return;		//operacion abortada
+	}
 
-			//!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-			tarea_actual = os_getTareaActual();
-			tarea_actual->estado = TAREA_BLOCKED;
-			cola->tarea_asociada = tarea_actual;
-			//---------------------------------------------------------------------------
 
-			os_exit_critical();
-			os_CpuYield();
-		}
+	/*
+	 * El siguiente bloque while determina que hasta que la cola no tenga lugar
+	 * disponible, no se avance. Si no tiene lugar se bloquea la tarea actual
+	 * que es la que esta tratando de escribir y luego se hace un yield
+	 */
+	while((cola->indice_head + 1) % elementos_total == cola->indice_tail)  {
 
-		/*
-		 * Si la cola tiene lugar, se escribe mediante la funcion memcpy que copia un
-		 * bloque completo de memoria iniciando desde la direccion apuntada por el
-		 * primer elemento. Como data es un vector del tipo uint8_t, la aritmetica
-		 * de punteros es byte a byte (consecutivos) y se logra el efecto deseado
-		 * Esto permite guardar datos definidos por el usuario, como ser estructuras
-		 * de datos completas. Luego se actualiza el undice head y se limpia la tarea
-		 * asociada, dado que ese puntero ya no tiene utilidad
-		 */
+		os_enter_critical();
 
-		memcpy(cola->data+index_h,dato,cola->size_elemento);
-		cola->indice_head = (cola->indice_head + 1) % elementos_total;
-		cola->tarea_asociada = NULL;
+		//!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+		tarea_actual = os_getTareaActual();
+		tarea_actual->estado = TAREA_BLOCKED;
+		cola->tarea_asociada = tarea_actual;
+		//---------------------------------------------------------------------------
+
+		os_exit_critical();
+		os_CpuYield();
+	}
+
+	/*
+	 * Si la cola tiene lugar, se escribe mediante la funcion memcpy que copia un
+	 * bloque completo de memoria iniciando desde la direccion apuntada por el
+	 * primer elemento. Como data es un vector del tipo uint8_t, la aritmetica
+	 * de punteros es byte a byte (consecutivos) y se logra el efecto deseado
+	 * Esto permite guardar datos definidos por el usuario, como ser estructuras
+	 * de datos completas. Luego se actualiza el undice head y se limpia la tarea
+	 * asociada, dado que ese puntero ya no tiene utilidad
+	 */
+
+	memcpy(cola->data+index_h,dato,cola->size_elemento);
+	cola->indice_head = (cola->indice_head + 1) % elementos_total;
+	cola->tarea_asociada = NULL;
 }
 
 void os_ColaRead(osCola* cola, void* dato)  {
@@ -283,8 +319,24 @@ void os_ColaRead(osCola* cola, void* dato)  {
 			cola->tarea_asociada->estado == TAREA_BLOCKED)  {
 
 		cola->tarea_asociada->estado = TAREA_READY;
+
+		/*
+		 * Si es llamada desde una interrupcion, se debe indicar que es necesario efectuar
+		 * un scheduling, porque seguramente existe una tarea esperando este evento
+		 */
+		if (os_getEstadoSistema() == OS_IRQ_RUN)
+			os_setScheduleDesdeISR(true);
 	}
 
+
+	/*
+	 * En el caso de que se quiera leer una cola desde un ISR y este
+	 * vacia, la operacion es abortada (no se puede bloquear un handler)
+	 */
+	if (os_getEstadoSistema() == OS_IRQ_RUN && cola->indice_head == cola->indice_tail)  {
+		os_setWarning(WARN_OS_QUEUE_EMPTY_ISR);
+		return;		//operacion abortada
+	}
 
 	/*
 	 * El siguiente bloque while determina que hasta que la cola no tenga un dato
